@@ -1,7 +1,7 @@
 # pybip38
 Implementation of the full BIP0038 spec
 
-Requires:  pycrypto, scrypt, simplebitcoinfuncs
+Requires:  pycryptodome, scrypt, gmpy2
 
 BIP:  https://github.com/bitcoin/bips/blob/master/bip-0038.mediawiki
 
