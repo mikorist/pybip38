@@ -1,4 +1,3 @@
-pycrypto
+pycryptodome
 scrypt
-simplebitcoinfuncs
-
+gmpy2
