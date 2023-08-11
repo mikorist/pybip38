@@ -489,9 +489,6 @@ def passphrase_to_key(intermediatecode, iscompressed=False, seedb=os.urandom(24)
 
 
 def confirm38code(password, cfrm38code, outputlotsequence=False):
-    print(len(cfrm38code))
-    print(cfrm38code)
-
     password = normalize_input(password, False, True)
     cfrm38code = b58d(cfrm38code)  # Convert from Base58 to bytes
     assert len(cfrm38code) == 102
