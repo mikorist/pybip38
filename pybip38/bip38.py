@@ -22,7 +22,6 @@ COMPRESSION_FLAGBYTES = ['20','24','28','2c','30','34','38','3c','e0','e8','f0',
 LOTSEQUENCE_FLAGBYTES = ['04','0c','14','1c','24','2c','34','3c']
 NON_MULTIPLIED_FLAGBYTES = ['c0','c8','d0','d8','e0','e8','f0','f8']
 EC_MULTIPLIED_FLAGBYTES = ['00','04','08','0c','10','14','18','1c','20','24','28','2c','30','34','38','3c']
-ILLEGAL_FLAGBYTES = ['c4','cc','d4','dc','e4','ec','f4','fc']
 N = gmpy2.mpz("0xfffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141")
 P = gmpy2.mpz("0xfffffffffffffffffffffffffffffffffffffffffffffffffffffffefffffc2f")
 Gx = gmpy2.mpz("0x79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798")
@@ -399,13 +398,16 @@ def intermediate_code(
 
 def bip38encrypt(password, priv, iscompressed=False):
     password = normalize_input(password, False, True)
-    priv, _, iscompressed = (
-        wiftohex(priv)
-        if isinstance(priv, str)
-        else (privtohex(priv), "0142", iscompressed)
-    )
-    flagbyte = "e0" if not iscompressed else "e4"
-
+    try:
+        priv, prefix, iscompressed = wiftohex(priv)
+    except:
+        priv = privtohex(priv)
+    prefix = "0142"  # Not using EC multiplication
+    if iscompressed:
+        flagbyte = 224
+    else:
+        flagbyte = 192
+    flagbyte_hex = format(flagbyte, "02x")  # Convert flagbyte to 2-digit hexadecimal
     pubkey = privtopub(priv, iscompressed)
     address = pubtoaddress(pubkey, "00")
     try:
@@ -413,21 +415,15 @@ def bip38encrypt(password, priv, iscompressed=False):
     except:
         addrhex = hexstrlify(bytearray(address, "ascii"))
     salt = unhexlify(hash256(addrhex)[:8])
-
     scrypthash = hexstrlify(scrypt.hash(password, salt, 16384, 8, 8, 64))
     msg1 = dechex((gmpy2.mpz(priv[:32], 16) ^ gmpy2.mpz(scrypthash[:32], 16)), 16)
     msg2 = dechex((gmpy2.mpz(priv[32:], 16) ^ gmpy2.mpz(scrypthash[32:64], 16)), 16)
-
     msg1, msg2 = unhexlify(msg1), unhexlify(msg2)
     key = unhexlify(scrypthash[64:])
-
-    half1 = simple_aes_encrypt(msg1, key)
-    half2 = simple_aes_encrypt(msg2, key)
-
+    half1 = hexstrlify(simple_aes_encrypt(msg1, key))
+    half2 = hexstrlify(simple_aes_encrypt(msg2, key))
     salt = hexstrlify(salt)
-    return b58e(
-        "0142" + flagbyte + salt + hexlify(half1).decode() + hexlify(half2).decode()
-    )
+    return b58e(prefix + flagbyte_hex + salt + half1 + half2)
 
 
 def passphrase_to_key(intermediatecode, iscompressed=False, seedb=os.urandom(24)):
@@ -493,6 +489,9 @@ def passphrase_to_key(intermediatecode, iscompressed=False, seedb=os.urandom(24)
 
 
 def confirm38code(password, cfrm38code, outputlotsequence=False):
+    print(len(cfrm38code))
+    print(cfrm38code)
+
     password = normalize_input(password, False, True)
     cfrm38code = b58d(cfrm38code)  # Convert from Base58 to bytes
     assert len(cfrm38code) == 102
