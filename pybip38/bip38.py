@@ -531,39 +531,31 @@ def uncompress(pub):
     return '04' + x + y
 
 
-def confirm38code(password, cfrm38code, outputlotsequence=False):
+def confirm38code(password, cfrm38code):
     password = normalize_input(password, False, True)
     cfrm38code = b58d(cfrm38code)  # Convert from Base58 to bytes
     assert len(cfrm38code) == 102
     assert cfrm38code[:10] == "643bf6a89a"
+    
     flagbyte = cfrm38code[10:12]
     addresshash = cfrm38code[12:20]
     owner_entropy = cfrm38code[20:36]
     encpointb = cfrm38code[36:]
 
-    if flagbyte in LOTSEQUENCE_FLAGBYTES:
-        owner_salt = owner_entropy[:8]
-        lotsequence = owner_entropy[8:]
-    else:
-        lotsequence = False
-        owner_salt = owner_entropy
+    owner_salt = owner_entropy[:8]
+    lotsequence = owner_entropy[8:]
 
-    owner_salt = unhexlify(owner_salt)
-    prefactor = hexstrlify(scrypt.hash(password, owner_salt, 16384, 8, 8, 32))
+    salt = unhexlify(owner_salt)
+    prefactor = hexstrlify(scrypt.hash(password, salt, 16384, 8, 8, 32))
 
-    if flagbyte in LOTSEQUENCE_FLAGBYTES:
+    if lotsequence:
         passfactor = hash256(prefactor + owner_entropy)
     else:
         passfactor = prefactor
 
-    if gmpy2.mpz(passfactor, 16) == 0 or gmpy2.mpz(passfactor, 16) >= N:
-        if outputlotsequence:
-            return False, False, False
-        else:
-            return False
-
     passpoint = privtopub(passfactor, True)
     password = unhexlify(passpoint)
+    
     salt = unhexlify(addresshash + owner_entropy)
     scrypthash = hexstrlify(scrypt.hash(password, salt, 1024, 1, 1, 64))
     msg1 = unhexlify(encpointb[2:34])
@@ -587,30 +579,13 @@ def confirm38code(password, cfrm38code, outputlotsequence=False):
         newkey = compress(newkey)
 
     address = pubtoaddress(newkey, "00")
-
-    try:
-        addrhex = hexstrlify(address)
-    except:
-        addrhex = hexstrlify(bytearray(address, "ascii"))
-
+    addrhex = hexstrlify(bytearray(address, "ascii"))
     addresshash2 = hash256(addrhex)[:8]
 
     if addresshash == addresshash2:
-        if outputlotsequence:
-            if lotsequence is not False:
-                lotsequence = gmpy2.mpz(lotsequence, 16)
-                sequence = lotsequence % 4096
-                lot = (lotsequence - sequence) // 4096
-                return address, lot, sequence
-            else:
-                return address, False, False
-        else:
-            return address
+        return address
     else:
-        if outputlotsequence:
-            return False, False, False
-        else:
-            return False
+        return False
 
 
 def addversion(encpriv, version="80"):
