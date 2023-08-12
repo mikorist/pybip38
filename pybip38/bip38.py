@@ -26,6 +26,7 @@ N = gmpy2.mpz("0xfffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd036414
 P = gmpy2.mpz("0xfffffffffffffffffffffffffffffffffffffffffffffffffffffffefffffc2f")
 Gx = gmpy2.mpz("0x79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798")
 Gy = gmpy2.mpz("0x483ada7726a3c4655da4fbfc0e1108a8fd17b448a68554199c47d08ffb10d4b8")
+
 # Precompute constants
 P_inv = gmpy2.invert(P, N)
 Gx_Gy = (Gx, Gy)
@@ -258,61 +259,99 @@ def wiftohex(wifkey):
     return key, prefix, iscompressed
 
 
-def confirm38code(password, cfrm38code):
+def bip38decrypt(password, encrypted_private_key, outputlotsequence=False):
     password = normalize_input(password, False, True)
-    cfrm38code = b58d(cfrm38code)  # Convert from Base58 to bytes
-    assert len(cfrm38code) == 102
-    assert cfrm38code[:10] == "643bf6a89a"
+    encrypted_private_key = b58d(encrypted_private_key)
 
-    flagbyte = cfrm38code[10:12]
-    addresshash = cfrm38code[12:20]
-    owner_entropy = cfrm38code[20:36]
-    encpointb = cfrm38code[36:]
+    prefix = encrypted_private_key[:4]
+    flagbyte = encrypted_private_key[4:6]
+    is_compressed = flagbyte in COMPRESSION_FLAGBYTES
 
-    owner_salt = owner_entropy[:8]
-    lotsequence = owner_entropy[8:]
+    if prefix not in ["0142", "0143"]:
+        return (False, False, False) if outputlotsequence else False
 
-    salt = unhexlify(owner_salt)
-    prefactor = hexstrlify(scrypt.hash(password, salt, 16384, 8, 8, 32))
+    if prefix == "0142":
+        salt = unhexlify(encrypted_private_key[6:14])
+        msg1, msg2 = unhexlify(encrypted_private_key[14:46]), unhexlify(
+            encrypted_private_key[46:]
+        )
 
-    if lotsequence:
-        passfactor = hash256(prefactor + owner_entropy)
+        scrypthash = hexstrlify(scrypt.hash(password, salt, 16384, 8, 8, 64))
+        key = unhexlify(scrypthash[64:])
+        msg1, msg2 = hexstrlify(simple_aes_decrypt(msg1, key)), hexstrlify(
+            simple_aes_decrypt(msg2, key)
+        )
+
+        half1 = gmpy2.mpz(msg1, 16) ^ gmpy2.mpz(scrypthash[:32], 16)
+        half2 = gmpy2.mpz(msg2, 16) ^ gmpy2.mpz(scrypthash[32:64], 16)
+        priv = dechex(half1, 16) + dechex(half2, 16)
+
     else:
-        passfactor = prefactor
+        owner_entropy = encrypted_private_key[14:30]
+        enchalf1half1, enchalf2 = (
+            encrypted_private_key[30:46],
+            encrypted_private_key[46:],
+        )
 
-    passpoint = privtopub(passfactor, True)
-    password = unhexlify(passpoint)
+        lotsequence, owner_salt = (
+            (owner_entropy[8:], owner_entropy[:8])
+            if flagbyte in LOTSEQUENCE_FLAGBYTES
+            else (False, owner_entropy)
+        )
+        salt = unhexlify(owner_salt)
 
-    salt = unhexlify(addresshash + owner_entropy)
-    scrypthash = hexstrlify(scrypt.hash(password, salt, 1024, 1, 1, 64))
-    msg1 = unhexlify(encpointb[2:34])
-    msg2 = unhexlify(encpointb[34:])
-    key = unhexlify(scrypthash[64:])
+        prefactor = hexstrlify(scrypt.hash(password, salt, 16384, 8, 8, 32))
+        passfactor = hash256(prefactor + owner_entropy) if lotsequence else prefactor
 
-    half1 = simple_aes_decrypt(msg1, key)
-    half2 = simple_aes_decrypt(msg2, key)
-    half1, half2 = hexstrlify(half1), hexstrlify(half2)
+        passpoint = privtopub(passfactor, True)
+        password = unhexlify(passpoint)
 
-    pointb_half1 = gmpy2.mpz(half1, 16) ^ gmpy2.mpz(scrypthash[:32], 16)
-    pointb_half2 = gmpy2.mpz(half2, 16) ^ gmpy2.mpz(scrypthash[32:64], 16)
-    pointb_xcoord = dechex(pointb_half1, 16) + dechex(pointb_half2, 16)
+        salt = unhexlify(encrypted_private_key[6:14] + owner_entropy)
+        encseedb = hexstrlify(scrypt.hash(password, salt, 1024, 1, 1, 64))
+        key = unhexlify(encseedb[64:])
 
-    pointb_prefix = gmpy2.mpz(encpointb[:2], 16) ^ (gmpy2.mpz(scrypthash[126:], 16) & 1)
-    pointb = dechex(pointb_prefix, 1) + pointb_xcoord
+        tmp = hexstrlify(simple_aes_decrypt(unhexlify(enchalf2), key))
+        enchalf1half2_seedblastthird = gmpy2.mpz(tmp, 16) ^ gmpy2.mpz(
+            encseedb[32:64], 16
+        )
+        enchalf1half2_seedblastthird = dechex(enchalf1half2_seedblastthird, 16)
+        enchalf1half2 = enchalf1half2_seedblastthird[:16]
+        enchalf1 = enchalf1half1 + enchalf1half2
 
-    newkey = multiplypub(pointb, passfactor, False)
+        seedb = hexstrlify(simple_aes_decrypt(unhexlify(enchalf1), key))
+        seedb = gmpy2.mpz(seedb, 16) ^ gmpy2.mpz(encseedb[:32], 16)
+        seedb = dechex(seedb, 16) + enchalf1half2_seedblastthird[16:]
 
-    if flagbyte in COMPRESSION_FLAGBYTES:
-        newkey = compress(newkey)
+        factorb = hash256(seedb)
+        if not (0 < gmpy2.mpz(factorb, 16) < N):
+            return (False, False, False) if outputlotsequence else False
 
-    address = pubtoaddress(newkey, "00")
-    addrhex = hexstrlify(bytearray(address, "ascii"))
-    addresshash2 = hash256(addrhex)[:8]
+        priv = multiplypriv(passfactor, factorb)
 
-    if addresshash == addresshash2:
-        return address
-    else:
-        return False
+    pub = privtopub(priv, is_compressed)
+    privcompress = "01" if is_compressed else ""
+
+    address = pubtoaddress(pub, "00")
+    try:
+        addrhex = hexstrlify(address)
+    except:
+        addrhex = hexstrlify(bytearray(address, "ascii"))
+
+    addresshash = hash256(addrhex)[:8]
+
+    if addresshash == encrypted_private_key[6:14]:
+        priv = b58e("80" + priv + privcompress)
+
+        if outputlotsequence:
+            if lotsequence:
+                lot = gmpy2.mpz(lotsequence, 16)
+                return priv, lot // 4096, lot % 4096
+            else:
+                return priv, False, False
+        else:
+            return priv
+
+    return (False, False, False) if outputlotsequence else False
 
 
 def intermediate_code(
@@ -448,8 +487,7 @@ def passphrase_to_key(intermediatecode, iscompressed=False, seedb=os.urandom(24)
 
     return enckey, cfrm38code, address
 
-
-def pow_mod(x, y, z):
+def pow_mod(x,y,z):
     n = 1
     while y:
         if y & 1:
@@ -458,16 +496,13 @@ def pow_mod(x, y, z):
         x = x * x % z
     return n
 
-
-def multiplypub(pub, priv, outcompressed=True):
+def multiplypub(pub,priv,outcompressed=True):
     if len(pub) == 66:
         pub = uncompress(pub)
-    x, y = ecmultiply(
-        gmpy2.mpz(pub[2:66], 16), gmpy2.mpz(pub[66:], 16), gmpy2.mpz(priv, 16)
-    )
-    x = dechex(x, 32)
-    y = dechex(y, 32)
-    o = "04" + x + y
+    x, y = ecmultiply(gmpy2.mpz(pub[2:66],16),gmpy2.mpz(pub[66:],16),gmpy2.mpz(priv,16))
+    x = dechex(x,32)
+    y = dechex(y,32)
+    o = '04' + x + y
     if outcompressed:
         return compress(o)
     else:
@@ -477,50 +512,58 @@ def multiplypub(pub, priv, outcompressed=True):
 def compress(pub):
     x = pub[2:66]
     y = pub[66:]
-    if gmpy2.mpz(y, 16) % 2:
-        o = str("03") + str(x)
+    if gmpy2.mpz(y,16) % 2:
+        o = str('03') + str(x)
     else:
-        o = str("02") + str(x)
+        o = str('02') + str(x)
     return o
 
 
 def uncompress(pub):
-    yp = gmpy2.mpz(pub[:2], 16) - 2
-    x = gmpy2.mpz(pub[2:], 16)
-    a = (pow_mod(x, 3, P) + 7) % P
-    y = pow_mod(a, (P + 1) // 4, P)
+    yp = gmpy2.mpz(pub[:2],16) - 2
+    x = gmpy2.mpz(pub[2:],16)
+    a = (pow_mod(x,3,P) + 7) % P
+    y = pow_mod(a, (P+1)//4, P)
     if y % 2 != yp:
         y = -y % P
-    x = dechex(x, 32)
-    y = dechex(y, 32)
-    return "04" + x + y
+    x = dechex(x,32)
+    y = dechex(y,32)
+    return '04' + x + y
 
 
-def confirm38code(password, cfrm38code):
+def confirm38code(password, cfrm38code, outputlotsequence=False):
     password = normalize_input(password, False, True)
     cfrm38code = b58d(cfrm38code)  # Convert from Base58 to bytes
     assert len(cfrm38code) == 102
     assert cfrm38code[:10] == "643bf6a89a"
-
     flagbyte = cfrm38code[10:12]
     addresshash = cfrm38code[12:20]
     owner_entropy = cfrm38code[20:36]
     encpointb = cfrm38code[36:]
 
-    owner_salt = owner_entropy[:8]
-    lotsequence = owner_entropy[8:]
+    if flagbyte in LOTSEQUENCE_FLAGBYTES:
+        owner_salt = owner_entropy[:8]
+        lotsequence = owner_entropy[8:]
+    else:
+        lotsequence = False
+        owner_salt = owner_entropy
 
-    salt = unhexlify(owner_salt)
-    prefactor = hexstrlify(scrypt.hash(password, salt, 16384, 8, 8, 32))
+    owner_salt = unhexlify(owner_salt)
+    prefactor = hexstrlify(scrypt.hash(password, owner_salt, 16384, 8, 8, 32))
 
-    if lotsequence:
+    if flagbyte in LOTSEQUENCE_FLAGBYTES:
         passfactor = hash256(prefactor + owner_entropy)
     else:
         passfactor = prefactor
 
+    if gmpy2.mpz(passfactor, 16) == 0 or gmpy2.mpz(passfactor, 16) >= N:
+        if outputlotsequence:
+            return False, False, False
+        else:
+            return False
+
     passpoint = privtopub(passfactor, True)
     password = unhexlify(passpoint)
-
     salt = unhexlify(addresshash + owner_entropy)
     scrypthash = hexstrlify(scrypt.hash(password, salt, 1024, 1, 1, 64))
     msg1 = unhexlify(encpointb[2:34])
@@ -544,13 +587,30 @@ def confirm38code(password, cfrm38code):
         newkey = compress(newkey)
 
     address = pubtoaddress(newkey, "00")
-    addrhex = hexstrlify(bytearray(address, "ascii"))
+
+    try:
+        addrhex = hexstrlify(address)
+    except:
+        addrhex = hexstrlify(bytearray(address, "ascii"))
+
     addresshash2 = hash256(addrhex)[:8]
 
     if addresshash == addresshash2:
-        return address
+        if outputlotsequence:
+            if lotsequence is not False:
+                lotsequence = gmpy2.mpz(lotsequence, 16)
+                sequence = lotsequence % 4096
+                lot = (lotsequence - sequence) // 4096
+                return address, lot, sequence
+            else:
+                return address, False, False
+        else:
+            return address
     else:
-        return False
+        if outputlotsequence:
+            return False, False, False
+        else:
+            return False
 
 
 def addversion(encpriv, version="80"):
