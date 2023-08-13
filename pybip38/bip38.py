@@ -515,7 +515,7 @@ def bip38encrypt(password, priv, iscompressed=False):
 def passphrase_to_key(intermediatecode, iscompressed=False, seedb=os.urandom(24)):
     intermediatecode = normalize_input(intermediatecode)
     intermediatecode = b58d(intermediatecode)
-    prefix = "0143"
+    prefix = "0142"
     flagbyte = "20" if iscompressed else "00"
 
     magicbytes = intermediatecode[:16]
