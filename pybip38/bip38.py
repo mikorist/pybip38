@@ -420,7 +420,7 @@ def intermediate_code(
         passfactor = hash256(prefactor + owner_entropy)
 
         # Magic bytes for useLotAndSequence case
-        magicbytes = "2ce9b3e1ff39e251"
+        magicbytes = "2CE9B3E1FF39E251"
     else:
         # Calculate passfactor
         passfactor = scrypt.hash(password, owner_salt, 16384, 8, 8, 32)
@@ -428,7 +428,7 @@ def intermediate_code(
         owner_entropy = hexstrlify(owner_salt)
 
         # Magic bytes for non-useLotAndSequence case
-        magicbytes = "2ce9b3e1ff39e253"
+        magicbytes = "2CE9B3E1FF39E253"
 
     # Calculate passpoint and return the intermediate code
     passpoint = privtopub(passfactor, True)
@@ -569,7 +569,7 @@ def passphrase_to_key(intermediatecode, iscompressed=False, seedb=os.urandom(24)
     encpointb = (
         pointb_prefix + hexlify(pointb_half1).decode() + hexlify(pointb_half2).decode()
     )
-    cfrm38code = b58e("643bf6a89a" + flagbyte + addresshash + owner_entropy + encpointb)
+    cfrm38code = b58e("643BF6A89A" + flagbyte + addresshash + owner_entropy + encpointb)
 
     return enckey, cfrm38code, address
 
@@ -578,7 +578,7 @@ def confirm38code(password, cfrm38code, outputlotsequence=False):
     password = normalize_input(password, False, True)
     cfrm38code = b58d(cfrm38code)
     assert len(cfrm38code) == 102
-    assert cfrm38code[:10] == "643bf6a89a"
+    assert cfrm38code[:10] == "643BF6A89A"
     flagbyte = cfrm38code[10:12]
     addresshash = cfrm38code[12:20]
     owner_entropy = cfrm38code[20:36]
