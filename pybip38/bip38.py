@@ -2,10 +2,6 @@
 # -*- coding: utf-8 -*-
 
 from __future__ import print_function, division, absolute_import, unicode_literals
-try:  from __builtin__ import bytes, str, open, super, range, zip, round, int, pow, object, input
-except ImportError:  pass
-try:  from __builtin__ import raw_input as input
-except ImportError:  pass
 
 import os
 import sys
@@ -39,10 +35,10 @@ def simple_aes_decrypt(msg, key):
     assert len(msg) == 32
     return unhexlify(msg)
 
-COMPRESSION_FLAGBYTES = ['20', '24', '28', '2c', '30', '34', '38', '3c', 'e0', 'e8', 'f0', 'f8']
-LOTSEQUENCE_FLAGBYTES = ['04', '0c', '14', '1c', '24', '2c', '34', '3c']
-NON_MULTIPLIED_FLAGBYTES = ['c0', 'c8', 'd0', 'd8', 'e0', 'e8', 'f0', 'f8']
-EC_MULTIPLIED_FLAGBYTES = ['00', '04', '08', '0c', '10', '14', '18', '1c', '20', '24', '28', '2c', '30', '34', '38', '3c']
+COMPRESSION_FLAGBYTES = {'20', '24', '28', '2c', '30', '34', '38', '3c', 'e0', 'e8', 'f0', 'f8'}
+LOTSEQUENCE_FLAGBYTES = {'04', '0c', '14', '1c', '24', '2c', '34', '3c'}
+NON_MULTIPLIED_FLAGBYTES = {'c0', 'c8', 'd0', 'd8', 'e0', 'e8', 'f0', 'f8'}
+EC_MULTIPLIED_FLAGBYTES = {'00', '04', '08', '0c', '10', '14', '18', '1c', '20', '24', '28', '2c', '30', '34', '38', '3c'}
 N = gmpy2.mpz("0xfffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141")
 P = gmpy2.mpz("0xfffffffffffffffffffffffffffffffffffffffffffffffffffffffefffffc2f")
 Gx = gmpy2.mpz("0x79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798")
@@ -53,13 +49,7 @@ ecmultiply_memo = {}
 
 
 def modinv(a, n=P):
-    lm, hm = mpz(1), mpz(0)
-    low, high = a % n, n
-    while low > 1:
-        ratio = high // low
-        nm, new = hm - lm * ratio, high - low * ratio
-        lm, low, hm, high = nm, new, lm, low
-    return lm % n
+    return gmpy2.invert(a, n)
 
 
 def ecadd(xp, yp, xq, yq):
@@ -70,7 +60,7 @@ def ecadd(xp, yp, xq, yq):
 
 
 def ecsubtract(xp, yp, xq, yq):
-    return ecadd(xp, yp, xq, ((P - yq) % P))
+    return ecadd(xp, yp, xq, (P - yq) % P)
 
 
 def ecdouble(xp, yp):
@@ -89,11 +79,11 @@ def ecmultiply(xs, ys, scalar):
     if (xs, ys, scalar) in ecmultiply_memo:
         return ecmultiply_memo[(xs, ys, scalar)]
 
-    scalarbin = str(bin(scalar)).lstrip("0b")
+    scalarbin = bin(scalar)[2:]
     Qx, Qy = xs, ys
-    for i in range(1, len(scalarbin)):
+    for bit in scalarbin[1:]:
         Qx, Qy = ecdouble(Qx, Qy)
-        if scalarbin[i] == "1":
+        if bit == "1":
             Qx, Qy = ecadd(Qx, Qy, xs, ys)
 
     ecmultiply_memo[(xs, ys, scalar)] = (Qx, Qy)
@@ -101,20 +91,19 @@ def ecmultiply(xs, ys, scalar):
 
 
 def pow_mod(x, y, z):
-    n = 1
-    while y:
-        if y & 1:
-            n = n * x % z
-        y >>= 1
-        x = x * x % z
-    return n
+    return gmpy2.powmod(x, y, z)
 
 
 def strlify(a):
-    if a == b"b" or a == "b":
-        return "b"
+    return a.decode() if isinstance(a, bytes) else str(a)
 
-    return str(a).rstrip("'").replace("b'", "", 1).replace("'", "")
+
+def hexstrlify(a):
+    return hexlify(a).decode()
+
+
+def hexreverse(a):
+    return hexstrlify(unhexlify(a)[::-1])
 
 
 def isitstring(i):
@@ -143,19 +132,10 @@ def isitint(i):
             return False
 
 
-def hexstrlify(a):
-    return strlify(hexlify(a))
-
-
-def hexreverse(a):
-    return hexstrlify(unhexlify(a)[::-1])
-
-
 def dechex(num, zfill=0):
     if isinstance(num, gmpy2.mpz):
-        hex_num = hex(num)[2:]  # Calculate hex representation only once
+        hex_num = hex(num)[2:]
 
-        # Handle the "0" case without string manipulation
         if len(hex_num) % 2:
             hex_num = "0" + hex_num
 
@@ -192,10 +172,13 @@ def normalize_input(input, preferunicodeoverstring=False, nfconly=False):
         raise Exception("Unable to normalize input:", e)
 
 
+b58_digits = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
+
+
 def privtopub(priv, outcompressed=True):
     x, y = ecmultiply(Gx, Gy, gmpy2.mpz(priv, 16))
-    x = dechex(x, 32)
-    y = dechex(y, 32)
+    x = format(x, "064x")
+    y = format(y, "064x")
     o = "04" + x + y
     if outcompressed:
         return compress(o)
@@ -205,10 +188,7 @@ def privtopub(priv, outcompressed=True):
 
 def multiplypriv(p1, p2):
     result = (gmpy2.mpz(p1, 16) * gmpy2.mpz(p2, 16)) % N
-    return dechex(result, 32)
-
-
-b58_digits = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
+    return format(result, "064x")
 
 
 def b58e(b, check=True):
@@ -222,7 +202,6 @@ def b58e(b, check=True):
         res.append(b58_digits[r])
     res = "".join(res[::-1])
 
-    # "1" is prepended, since "0" isn't in the base58 alphabet
     czero = b"\x00"
     if sys.version_info[0] > 2:
         czero = 0
@@ -233,10 +212,8 @@ def b58e(b, check=True):
         else:
             break
     o = b58_digits[0] * pad + res
-    #
-
     try:
-        o = str(o, "ascii")
+        o = o.decode("ascii")
     except:
         pass
     return o
@@ -256,7 +233,6 @@ def b58d(s, check=True):
         h = "0" + h
     res = unhexlify(h.encode("utf8"))
     pad = 0
-
     for c in s[:-1]:
         if c == b58_digits[0]:
             pad += 1
@@ -266,10 +242,9 @@ def b58d(s, check=True):
 
     if check:
         assert hashlib.sha256(hashlib.sha256(o[:-4]).digest()).digest()[:4] == o[-4:]
-        return str(hexlify(o[:-4])).rstrip("'").replace("b'", "", 1).replace("'", "")
-
+        return hexlify(o[:-4]).decode("utf-8")
     else:
-        return str(hexlify(o)).rstrip("'").replace("b'", "", 1).replace("'", "")
+        return hexlify(o).decode("utf-8")
 
 
 def multiplypub(pub, priv, outcompressed=True):
@@ -278,8 +253,8 @@ def multiplypub(pub, priv, outcompressed=True):
     x, y = ecmultiply(
         gmpy2.mpz(pub[2:66], 16), gmpy2.mpz(pub[66:], 16), gmpy2.mpz(priv, 16)
     )
-    x = dechex(x, 32)
-    y = dechex(y, 32)
+    x = format(x, "064x")
+    y = format(y, "064x")
     o = "04" + x + y
     if outcompressed:
         return compress(o)
@@ -291,9 +266,9 @@ def compress(pub):
     x = pub[2:66]
     y = pub[66:]
     if gmpy2.mpz(y, 16) % 2:
-        o = str("03") + str(x)
+        o = "03" + x
     else:
-        o = str("02") + str(x)
+        o = "02" + x
     return o
 
 
@@ -304,28 +279,19 @@ def uncompress(pub):
     y = pow_mod(a, (P + 1) // 4, P)
     if y % 2 != yp:
         y = -y % P
-    x = dechex(x, 32)
-    y = dechex(y, 32)
+    x = format(x, "064x")
+    y = format(y, "064x")
     return "04" + x + y
 
 
 def hash160(hexstring):
     h = hashlib.new("ripemd160")
     h.update(hashlib.sha256(unhexlify(hexstring)).digest())
-    return str(hexlify(h.digest())).rstrip("'").replace("b'", "", 1).replace("'", "")
+    return hexlify(h.digest()).decode("utf-8")
 
 
 def hash256(hexstring):
-    return (
-        str(
-            hexlify(
-                hashlib.sha256(hashlib.sha256(unhexlify(hexstring)).digest()).digest()
-            )
-        )
-        .rstrip("'")
-        .replace("b'", "", 1)
-        .replace("'", "")
-    )
+    return hashlib.sha256(hashlib.sha256(unhexlify(hexstring)).digest()).digest().hex()
 
 
 def pubtoaddress(pub, prefix="00"):
