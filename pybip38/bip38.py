@@ -172,9 +172,6 @@ def normalize_input(input, preferunicodeoverstring=False, nfconly=False):
         raise Exception("Unable to normalize input:", e)
 
 
-b58_digits = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
-
-
 def privtopub(priv, outcompressed=True):
     x, y = ecmultiply(Gx, Gy, gmpy2.mpz(priv, 16))
     x = format(x, "064x")
@@ -190,6 +187,7 @@ def multiplypriv(p1, p2):
     result = (gmpy2.mpz(p1, 16) * gmpy2.mpz(p2, 16)) % N
     return format(result, "064x")
 
+b58_digits = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
 
 def b58e(b, check=True):
     b = unhexlify(b)
