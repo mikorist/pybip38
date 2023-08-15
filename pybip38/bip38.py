@@ -48,10 +48,6 @@ Gy = gmpy2.mpz("0x483ada7726a3c4655da4fbfc0e1108a8fd17b448a68554199c47d08ffb10d4
 ecmultiply_memo = {}
 
 
-def modinv(a, n=P):
-    return gmpy2.invert(a, n)
-
-
 def ecadd(xp, yp, xq, yq):
     m = ((yq - yp) * modinv(xq - xp, P)) % P
     xr = (m * m - xp - xq) % P
@@ -88,6 +84,10 @@ def ecmultiply(xs, ys, scalar):
 
     ecmultiply_memo[(xs, ys, scalar)] = (Qx, Qy)
     return Qx, Qy
+
+
+def modinv(a, n=P):
+    return gmpy2.invert(a, n)
 
 
 def pow_mod(x, y, z):
@@ -515,7 +515,7 @@ def bip38encrypt(password, priv, iscompressed=False):
 def passphrase_to_key(intermediatecode, iscompressed=False, seedb=os.urandom(24)):
     intermediatecode = normalize_input(intermediatecode)
     intermediatecode = b58d(intermediatecode)
-    prefix = "0142"
+    prefix = "0143"
     flagbyte = "20" if iscompressed else "00"
 
     magicbytes = intermediatecode[:16]
