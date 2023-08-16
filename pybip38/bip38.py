@@ -522,7 +522,7 @@ def passphrase_to_key(intermediatecode, iscompressed=False, seedb=os.urandom(24)
     passpoint = intermediatecode[32:]
 
     if intermediatecode[14:16] == "51":
-        flagbyte = "24"
+        flagbyte += 4
 
     seedb = hexstrlify(seedb)
     factorb = hash256(seedb)
