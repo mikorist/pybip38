@@ -371,10 +371,11 @@ def bip38decrypt(password, encrypted_private_key, outputlotsequence=False):
     privcompress = "01" if is_compressed else ""
 
     address = pubtoaddress(pub, "00")
-    try:
-        addrhex = hexstrlify(address)
-    except:
-        addrhex = hexstrlify(bytearray(address, "ascii"))
+    addrhex = (
+        hexstrlify(address)
+        if isinstance(address, bytes)
+        else hexstrlify(bytearray(address, "ascii"))
+    )
 
     addresshash = hash256(addrhex)[:8]
 
@@ -489,17 +490,15 @@ def bip38encrypt(password, priv, iscompressed=False):
     except:
         priv = privtohex(priv)
     prefix = "0142"  # Not using EC multiplication
-    if iscompressed:
-        flagbyte = 224
-    else:
-        flagbyte = 192
-    flagbyte_hex = format(flagbyte, "02x")  # Convert flagbyte to 2-digit hexadecimal
+    flagbyte = 224 if iscompressed else 192
+    flagbyte_hex = format(flagbyte, "02x")
     pubkey = privtopub(priv, iscompressed)
     address = pubtoaddress(pubkey, "00")
-    try:
-        addrhex = hexstrlify(address)
-    except:
-        addrhex = hexstrlify(bytearray(address, "ascii"))
+    addrhex = (
+        hexstrlify(address)
+        if isinstance(address, bytes)
+        else hexstrlify(bytearray(address, "ascii"))
+    )
     salt = unhexlify(hash256(addrhex)[:8])
     scrypthash = hexstrlify(scrypt.hash(password, salt, 16384, 8, 8, 64))
     msg1 = dechex((gmpy2.mpz(priv[:32], 16) ^ gmpy2.mpz(scrypthash[:32], 16)), 16)
