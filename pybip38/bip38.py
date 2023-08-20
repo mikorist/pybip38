@@ -1,39 +1,35 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
-from __future__ import print_function, division, absolute_import, unicode_literals
-
-import os
-import sys
-import hashlib
-import scrypt
-import string
-import unicodedata
+import os, sys, hashlib, scrypt, string, unicodedata
 from binascii import hexlify, unhexlify
 from codecs import decode
 from Crypto.Cipher import AES
 import gmpy2
 from gmpy2 import mpz
 
+
 def simple_aes_encrypt(msg, key):
     assert len(key) == 32
     assert len(msg) == 16
     msg = hexstrlify(msg)  # Stupid hack/workaround for ascii decode errors
-    msg = msg + '7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b'
+    msg = msg + "7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b"
     cipher = AES.new(key, AES.MODE_ECB)
     return cipher.encrypt(unhexlify(msg))[:16]
+
 
 def simple_aes_decrypt(msg, key):
     assert len(msg) == 16
     assert len(key) == 32
     cipher = AES.new(key, AES.MODE_ECB)
     msg = hexstrlify(cipher.decrypt(msg))
-    while msg[-2:] == '7b':  # Can't use rstrip for multiple chars
+    while msg[-2:] == "7b":  # Can't use rstrip for multiple chars
         msg = msg[:-2]
     for i in range((32 - len(msg)) // 2):
-        msg = msg + '7b'
+        msg = msg + "7b"
     assert len(msg) == 32
     return unhexlify(msg)
+
 
 COMPRESSION_FLAGBYTES = {'20', '24', '28', '2c', '30', '34', '38', '3c', 'e0', 'e8', 'f0', 'f8'}
 LOTSEQUENCE_FLAGBYTES = {'04', '0c', '14', '1c', '24', '2c', '34', '3c'}
@@ -49,21 +45,17 @@ ecmultiply_memo = {}
 
 
 def ecadd(xp, yp, xq, yq):
-    m = ((yq - yp) * modinv(xq - xp, P)) % P
+    m = (yq - yp) * gmpy2.invert(xq - xp, P) % P
     xr = (m * m - xp - xq) % P
     yr = (m * (xp - xr) - yp) % P
     return xr, yr
 
 
-def ecsubtract(xp, yp, xq, yq):
-    return ecadd(xp, yp, xq, (P - yq) % P)
-
-
 def ecdouble(xp, yp):
-    ln = 3 * xp * xp
-    ld = 2 * yp
-    lam = (ln * modinv(ld, P)) % P
-    xr = (lam**2 - 2 * xp) % P
+    ln = 3 * xp * xp % P
+    ld = 2 * yp % P
+    lam = (ln * gmpy2.invert(ld, P)) % P
+    xr = (lam * lam - 2 * xp) % P
     yr = (lam * (xp - xr) - yp) % P
     return xr, yr
 
@@ -134,8 +126,9 @@ def isitint(i):
 
 def dechex(num, zfill=0):
     if isinstance(num, gmpy2.mpz):
-        hex_num = hex(num)[2:]
+        hex_num = hex(num)[2:]  # Calculate hex representation only once
 
+        # Handle the "0" case without string manipulation
         if len(hex_num) % 2:
             hex_num = "0" + hex_num
 
@@ -173,19 +166,16 @@ def normalize_input(input, preferunicodeoverstring=False, nfconly=False):
 
 
 def privtopub(priv, outcompressed=True):
-    x, y = ecmultiply(Gx, Gy, gmpy2.mpz(priv, 16))
-    x = format(x, "064x")
-    y = format(y, "064x")
-    o = "04" + x + y
-    if outcompressed:
-        return compress(o)
-    else:
-        return o
+    priv_int = int(priv, 16)
+    x, y = ecmultiply(Gx, Gy, priv_int)
+    x_str, y_str = format(x, "064x"), format(y, "064x")
+    pub = "04" + x_str + y_str
+    return compress(pub) if outcompressed else pub
 
 
 def multiplypriv(p1, p2):
     result = (gmpy2.mpz(p1, 16) * gmpy2.mpz(p2, 16)) % N
-    return format(result, "064x")
+    return dechex(result, 32)
 
 
 b58_digits = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
