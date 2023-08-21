@@ -1,40 +1,45 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
-import os, sys, hashlib, scrypt, string, unicodedata
-from binascii import hexlify, unhexlify
+import os,sys,hashlib,scrypt,string,unicodedata
+from binascii import hexlify,unhexlify
 from codecs import decode
 from Crypto.Cipher import AES
 import gmpy2
 from gmpy2 import mpz
 
-
 def simple_aes_encrypt(msg, key):
     assert len(key) == 32
     assert len(msg) == 16
     msg = hexstrlify(msg)  # Stupid hack/workaround for ascii decode errors
-    msg = msg + "7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b"
+    msg = msg + '7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b'
     cipher = AES.new(key, AES.MODE_ECB)
     return cipher.encrypt(unhexlify(msg))[:16]
-
 
 def simple_aes_decrypt(msg, key):
     assert len(msg) == 16
     assert len(key) == 32
+
     cipher = AES.new(key, AES.MODE_ECB)
-    msg = hexstrlify(cipher.decrypt(msg))
-    while msg[-2:] == "7b":  # Can't use rstrip for multiple chars
-        msg = msg[:-2]
-    for i in range((32 - len(msg)) // 2):
-        msg = msg + "7b"
-    assert len(msg) == 32
-    return unhexlify(msg)
+    decrypted_msg = hexstrlify(cipher.decrypt(msg))
+
+    # Remove trailing "7b" characters
+    msg_length = len(decrypted_msg)
+    while msg_length > 0 and decrypted_msg[-2:] == "7b":
+        decrypted_msg = decrypted_msg[:-2]
+        msg_length -= 2
+
+    # Pad with "7b" characters if necessary
+    padding_length = (32 - len(decrypted_msg)) // 2
+    decrypted_msg += "7b" * padding_length
+
+    assert len(decrypted_msg) == 32
+    return unhexlify(decrypted_msg)
 
 
 COMPRESSION_FLAGBYTES = {'20', '24', '28', '2c', '30', '34', '38', '3c', 'e0', 'e8', 'f0', 'f8'}
 LOTSEQUENCE_FLAGBYTES = {'04', '0c', '14', '1c', '24', '2c', '34', '3c'}
 NON_MULTIPLIED_FLAGBYTES = {'c0', 'c8', 'd0', 'd8', 'e0', 'e8', 'f0', 'f8'}
-EC_MULTIPLIED_FLAGBYTES = {'00', '04', '08', '0c', '10', '14', '18', '1c', '20', '24', '28', '2c', '30', '34', '38', '3c'}
 N = gmpy2.mpz("0xfffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141")
 P = gmpy2.mpz("0xfffffffffffffffffffffffffffffffffffffffffffffffffffffffefffffc2f")
 Gx = gmpy2.mpz("0x79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798")
@@ -82,16 +87,47 @@ def modinv(a, n=P):
     return gmpy2.invert(a, n)
 
 
+def montgomery_ladder(xs, ys, scalar):
+    if scalar == 0 or scalar >= N:
+        raise Exception("Invalid scalar.")
+
+    R0 = (xs, ys)
+    R1 = ecdouble(xs, ys)
+
+    scalar_bin = bin(scalar)[2:]
+
+    for bit in scalar_bin:
+        if bit == "0":
+            R1 = ecadd(R0[0], R0[1], R1[0], R1[1])
+            R0 = ecdouble(R0[0], R0[1])
+        else:
+            R0 = ecadd(R0[0], R0[1], R1[0], R1[1])
+            R1 = ecdouble(R1[0], R1[1])
+
+    return R0
+
+
+def montgomery_ecmultiply(xs, ys, scalar):
+    if (xs, ys, scalar) in ecmultiply_memo:
+        return ecmultiply_memo[(xs, ys, scalar)]
+
+    result = montgomery_ladder(xs, ys, scalar)
+    ecmultiply_memo[(xs, ys, scalar)] = result
+    return result
+
+
 def pow_mod(x, y, z):
     return gmpy2.powmod(x, y, z)
 
 
 def strlify(a):
-    return a.decode() if isinstance(a, bytes) else str(a)
+    if a == b"b" or a == "b":
+        return "b"
+    return str(a).rstrip("'").replace("b'", "", 1).replace("'", "")
 
 
 def hexstrlify(a):
-    return hexlify(a).decode()
+    return strlify(hexlify(a))
 
 
 def hexreverse(a):
@@ -203,7 +239,7 @@ def b58e(b, check=True):
             break
     o = b58_digits[0] * pad + res
     try:
-        o = o.decode("ascii")
+        o = o.decode("utf-8")
     except:
         pass
     return o
@@ -253,13 +289,10 @@ def multiplypub(pub, priv, outcompressed=True):
 
 
 def compress(pub):
-    x = pub[2:66]
-    y = pub[66:]
-    if gmpy2.mpz(y, 16) % 2:
-        o = "03" + x
-    else:
-        o = "02" + x
-    return o
+    x, y = pub[2:66], pub[66:]
+    y_int = int(y, 16)
+    prefix = "03" if y_int & 1 else "02"
+    return prefix + x
 
 
 def uncompress(pub):
@@ -276,12 +309,14 @@ def uncompress(pub):
 
 def hash160(hexstring):
     h = hashlib.new("ripemd160")
-    h.update(hashlib.sha256(unhexlify(hexstring)).digest())
-    return hexlify(h.digest()).decode("utf-8")
+    h.update(hashlib.sha256(bytes.fromhex(hexstring)).digest())
+    return h.digest().hex()
 
 
 def hash256(hexstring):
-    return hashlib.sha256(hashlib.sha256(unhexlify(hexstring)).digest()).digest().hex()
+    return (
+        hashlib.sha256(hashlib.sha256(bytes.fromhex(hexstring)).digest()).digest().hex()
+    )
 
 
 def pubtoaddress(pub, prefix="00"):
